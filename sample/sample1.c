@@ -30,12 +30,15 @@ int main(int argc, char* argv[]) {
     poll(pollfd, 1, 100);
 
     for(i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring; ++i){
+
       rxring = NETMAP_RXRING(nm_desc->nifp, i);
-      cur = rxring->cur;
-      for(n = nm_ring_space(rxring); n > 0; n--, cur = nm_ring_next(rxring, cur)) {
+
+      while(!nm_ring_empty(rxring)) {
         memset( src, 0x00, sizeof(src));
         memset( dst, 0x00, sizeof(dst));
+        memset( buf, 0x00, sizeof(buf));
 
+        cur = rxring->cur;
         buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
         printf("FULL: %x\n", *buf);
         ether = (struct ether_header *)buf;
@@ -60,8 +63,12 @@ int main(int argc, char* argv[]) {
         }
 
         printf("payload: %x\n", *payload);
-        printf("payload: %s\n", payload);
+        rxring->head = rxring->cur = nm_ring_next(rxring, cur);
       }
     }
+
+    if (ioctl(nm_desc->fd, NIOCRXSYNC, NULL) != 0)
+      perror("sync ioctl");
   }
+  return 0;
 }
