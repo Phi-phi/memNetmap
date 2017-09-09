@@ -10,6 +10,14 @@
 
 struct nm_desc *nm_desc;
 
+void printHex(char* buf) {
+  int i;
+  for(i = 0; i < strlen(buf); ++i) {
+    printf("02X", buf[i]);
+  }
+  printf("\n");
+}
+
 int main(int argc, char* argv[]) {
   unsigned int cur, n, i;
   char *buf, *payload;
@@ -34,23 +42,17 @@ int main(int argc, char* argv[]) {
       rxring = NETMAP_RXRING(nm_desc->nifp, i);
 
       while(!nm_ring_empty(rxring)) {
-        memset( src, 0x00, sizeof(src));
-        memset( dst, 0x00, sizeof(dst));
-        memset( buf, 0x00, sizeof(buf));
-
         cur = rxring->cur;
         buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
-        printf("FULL: %x\n", *buf);
+        printHex(buf);
         ether = (struct ether_header *)buf;
         ip = (struct ip *)(buf + sizeof(struct ether_header));
+        printf("ip: ");
+        printfHex((char*)ip);
         payload = (char *)(ip + ip->ip_hl * 4);
 
         inet_ntop(AF_INET, &ip->ip_src, src, sizeof(src));
         inet_ntop(AF_INET, &ip->ip_dst, dst, sizeof(dst));
-
-        printf("ip ver: %u\n", ip->ip_v);
-        printf("saddr: %s\n", src);
-        printf("daddr: %s\n", dst);
 
         if (ip->ip_p == IPPROTO_TCP) {
           tcp = (struct tcphdr *)payload;
@@ -62,7 +64,8 @@ int main(int argc, char* argv[]) {
           printf("UDP Dst port: %d\n", ntohs(udp->uh_dport));
         }
 
-        printf("payload: %x\n", *payload);
+        printf("payload: ");
+        printHex(payload);
         rxring->head = rxring->cur = nm_ring_next(rxring, cur);
       }
     }
