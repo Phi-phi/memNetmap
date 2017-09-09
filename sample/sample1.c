@@ -119,6 +119,42 @@ int main(int argc, char* argv[]) {
           tcp = (struct tcphdr *)payload;
           printf("TCP Src port: %u\n", ntohs(tcp->th_sport));
           printf("TCP Dst port: %u\n", ntohs(tcp->th_dport));
+
+          switch(tcp->th_flags) {
+            case TH_FIN:
+              printf("FIN\n");
+              break;
+            case TH_SYN:
+              printf("SYN\n");
+              break;
+            case TH_ACK:
+              printf("ACK\n");
+              break;
+            case TH_RST:
+              printf("RST\n");
+              break;
+            case TH_PUSH:
+              printf("PSH\n");
+              break;
+            case TH_URG:
+              printf("URG\n");
+              break;
+            case 0x12:
+              printf("SYN ACK\n");
+              break;
+            case 0x18:
+              printf("PSH ACK\n");
+              break;
+            case 0x11:
+              printf("FIN ACK\n");
+              break;
+            case 0x14:
+              printf("RST ACK\n");
+              break;
+            default:
+              printf("flag: %x\n", tcp->th_flags);
+              break;
+          }
         } else if (ip->ip_p == IPPROTO_UDP) {
           udp = (struct udphdr *)payload;
           printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
