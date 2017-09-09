@@ -90,7 +90,6 @@ int main(int argc, char* argv[]) {
         cur = rxring->cur;
         buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
         printHex(buf, rxring->slot[cur].len);
-        DumpHex(buf, rxring->slot[cur].len);
         ether = (struct ether_header *)buf;
         if(ntohs(ether->ether_type) == ETHERTYPE_ARP) {
           printf("This is ARP.\n");
@@ -104,7 +103,6 @@ int main(int argc, char* argv[]) {
         }
         ip = (struct ip *)(buf + sizeof(struct ether_header));
         printf("ip\n");
-        DumpHex(ip, sizeof(struct ip));
         payload = (char *)(ip + ip->ip_hl * 4);
 
         inet_ntop(AF_INET, &ip->ip_src, src, sizeof(src));
