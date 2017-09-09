@@ -61,7 +61,7 @@ void swapto(int to_hostring, struct netmap_slot *rxslot) {
 }
 
 int main(int argc, char* argv[]) {
-  unsigned int cur, i, is_hostring;
+  unsigned int cur, i, is_hostring, recieved;
   char *buf, *payload;
   struct netmap_ring *rxring;
   struct pollfd pollfd[1];
@@ -80,6 +80,8 @@ int main(int argc, char* argv[]) {
     pollfd[0].events = POLLIN;
     poll(pollfd, 1, 100);
 
+    recieved = 0;
+
     for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring; i++) {
 
       is_hostring = (i == nm_desc->last_rx_ring);
@@ -87,6 +89,7 @@ int main(int argc, char* argv[]) {
       rxring = NETMAP_RXRING(nm_desc->nifp, i);
 
       while(!nm_ring_empty(rxring)) {
+        recieved = 1;
         cur = rxring->cur;
         buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
         printHex(buf, rxring->slot[cur].len);
@@ -98,12 +101,12 @@ int main(int argc, char* argv[]) {
           printf("arp_spa=%s\n",ip_ntoa2(arp->arp_spa));
           printf("arp_tpa=%s\n",ip_ntoa2(arp->arp_tpa));
 
+          swapto(!is_hostring, &rxring->slot[cur]);
           rxring->head = rxring->cur = nm_ring_next(rxring, cur);
           continue;
         }
         ip = (struct ip *)(buf + sizeof(struct ether_header));
-        printf("ip\n");
-        payload = (char *)(ip + ip->ip_hl * 4);
+        payload = (char *)ip + (ip->ip_hl<<2);
 
         inet_ntop(AF_INET, &ip->ip_src, src, sizeof(src));
         inet_ntop(AF_INET, &ip->ip_dst, dst, sizeof(dst));
@@ -128,6 +131,9 @@ int main(int argc, char* argv[]) {
     }
     if (ioctl(nm_desc->fd, NIOCRXSYNC, NULL) != 0)
       perror("sync ioctl");
+    if (recieved) {
+      printf("\n--------------------------------------------------------------------------------\n");
+    }
   }
   return 0;
 }
