@@ -13,7 +13,7 @@ struct nm_desc *nm_desc;
 void printHex(char* buf) {
   int i;
   for(i = 0; i < strlen(buf); ++i) {
-    printf("02X", buf[i]);
+    printf("%02X", buf[i]);
   }
   printf("\n");
 }
