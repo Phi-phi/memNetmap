@@ -10,7 +10,7 @@
 int main() {
   int ld;
   struct sockaddr_in skaddr, remote;
-  int len,n;
+  unsigned int len,n;
   char bufin[512];
 
   if ((ld = socket( PF_INET, SOCK_DGRAM, IPPROTO_UDP )) < 0) {
@@ -29,7 +29,7 @@ int main() {
   }
 
   memset(&remote, 0, sizeof(remote));
-  
+
   while (1) {
     n = recvfrom(ld, bufin, 512, 0, (struct sockaddr *)&remote, &len);
 
