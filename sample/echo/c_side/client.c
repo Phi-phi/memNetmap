@@ -19,17 +19,43 @@ char *ip_ntoa2(u_char *d){
   return str;
 }
 
-int get_mtu() {
-  struct ifreq *ifr;
+static unsigned short
+in_cksum(unsigned short *addr, int len)
+{
+  int nleft, sum;
+  unsigned short *w;
+  union {
+    unsigned short us;
+    unsigned char  uc[2];
+  } last;
+  unsigned short answer;
 
-  strncpy(ifr->ifr_name, "ix1", IFNAMSIZ-1);
+  nleft = len;
+  sum = 0;
+  w = addr;
 
-  if (ioctl(nm_desc->fd, SIOCGIFMTU, ifr) != 0) {
-    perror("ioctl");
-    return 1;
+  /*
+   * Our algorithm is simple, using a 32 bit accumulator (sum), we add
+   * sequential 16 bit words to it, and at the end, fold back all the
+   * carry bits from the top 16 bits into the lower 16 bits.
+   */
+  while (nleft > 1)  {
+    sum += *w++;
+    nleft -= 2;
   }
 
-  return ifr->ifr_mtu;
+  /* mop up an odd byte, if necessary */
+  if (nleft == 1) {
+    last.uc[0] = *(unsigned char *)w;
+    last.uc[1] = 0;
+    sum += last.us;
+  }
+
+  /* add back carry outs from top 16 bits to low 16 bits */
+  sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
+  sum += (sum >> 16);                     /* add carry */
+  answer = ~sum;                          /* truncate to 16 bits */
+  return(answer);
 }
 
 void create_etherhdr(char* buf) {
@@ -69,6 +95,8 @@ void create_iphdr(char* buf, struct in_addr *src, struct in_addr *dst, size_t le
   ip->ip_src = *src;
   ip->ip_dst = *dst;
   ip->ip_sum = 0;
+
+  ip->ip_sum = in_cksum((unsigned short*)ip, ip->ip_hl << 2);
 }
 
 void create_udphdr(char* buf, unsigned short dport, char* data) {
@@ -156,7 +184,7 @@ int main(int argc, char* argv[]) {
   }
 
   create_etherhdr(pkt);
-  create_iphdr(pkt, &src, &dst, pktsizelen);
+  create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
   create_udphdr(pkt, 12345, data);
 
   while(1) {
@@ -164,12 +192,15 @@ int main(int argc, char* argv[]) {
     pollfd[0].events = POLLOUT;
     poll(pollfd, 1, -1);
 
+    cur = txring->cur;
+    tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
+    nm_pkt_copy(pkt, tbuf, pktsizelen);
+    txring->slot[cur].len = pktsizelen;
+    txring->slot[cur].flags |= NS_BUF_CHANGED;
+
+    txring->head = txring->cur = nm_ring_next(txring, cur);
 
     if(pollfd[0].revents & POLLOUT) {
-      tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
-      nm_pkt_copy(pkt, tbuf, pktsizelen);
-      txring->slot[cur].len = pktsizelen;
-      txring->slot[cur].flags |= NS_BUF_CHANGED;
       free(pkt);
       break;
     }
@@ -178,7 +209,7 @@ int main(int argc, char* argv[]) {
   while(1) {
     pollfd[0].fd = nm_desc->fd;
     pollfd[0].events = POLLIN;
-    poll(pollfd, 1, 100);
+    poll(pollfd, 1, -1);
 
     for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring; i++) {
 
