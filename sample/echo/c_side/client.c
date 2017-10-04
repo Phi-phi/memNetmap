@@ -153,10 +153,9 @@ void swapto(int to_hostring, struct netmap_slot *rxslot) {
 int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
   unsigned int cur, i, is_hostring;
-  char *pkt, *buf, *tbuf, *data, *payload;
+  char *pkt, *buf, *tbuf, *payload;
+  char data[512];
   struct in_addr src, dst;
-  char r_src[32];
-  char r_dst[32];
   struct pollfd pollfd[1];
   struct netmap_ring *txring, *rxring;
   struct ether_header *ether;
@@ -185,7 +184,7 @@ int main(int argc, char* argv[]) {
 
   create_etherhdr(pkt);
   create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
-  create_udphdr(pkt, 12345, data);
+  create_udphdr(pkt, 11233, data);
 
   while(1) {
     pollfd[0].fd = nm_desc->fd;
@@ -240,6 +239,10 @@ int main(int argc, char* argv[]) {
           printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
           printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
           printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
+          if(strcmp(data, payload + sizeof(struct udphdr*)) == 0) {
+            printf("ok.\n");
+            return 0;
+          }
         }
 
         swapto(!is_hostring, &rxring->slot[cur]);
