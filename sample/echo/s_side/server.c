@@ -13,12 +13,51 @@
 
 struct nm_desc *nm_desc;
 
+static unsigned short
+in_cksum(unsigned short *addr, int len)
+{
+  int nleft, sum;
+  unsigned short *w;
+  union {
+    unsigned short us;
+    unsigned char  uc[2];
+  } last;
+  unsigned short answer;
+
+  nleft = len;
+  sum = 0;
+  w = addr;
+
+  /*
+   * Our algorithm is simple, using a 32 bit accumulator (sum), we add
+   * sequential 16 bit words to it, and at the end, fold back all the
+   * carry bits from the top 16 bits into the lower 16 bits.
+   */
+  while (nleft > 1)  {
+    sum += *w++;
+    nleft -= 2;
+  }
+
+  /* mop up an odd byte, if necessary */
+  if (nleft == 1) {
+    last.uc[0] = *(unsigned char *)w;
+    last.uc[1] = 0;
+    sum += last.us;
+  }
+
+  /* add back carry outs from top 16 bits to low 16 bits */
+  sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
+  sum += (sum >> 16);                     /* add carry */
+  answer = ~sum;                          /* truncate to 16 bits */
+  return(answer);
+}
+
 void swap_ether(struct ether_header *ether) {
   unsigned char temp_host[6];
 
-  memcpy(temp_host, ether->ether_dhost, 6);
-  memcpy(ether->ether_dhost, ether->ether_shost, 6);
-  memcpy(ether->ether_shost, temp_host, 6);
+  memcpy((char*)temp_host, ether->ether_dhost, 6);
+  memcpy((char*)ether->ether_dhost, ether->ether_shost, 6);
+  memcpy((char*)ether->ether_shost, temp_host, 6);
 }
 
 void swap_ip(struct ip *ip, char* data) {
@@ -27,17 +66,20 @@ void swap_ip(struct ip *ip, char* data) {
   temp_addr = ip->ip_dst;
   ip->ip_dst = ip->ip_src;
   ip->ip_src = temp_addr;
+  ip->ip_sum = 0;
 
-  ip->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + strlen(data);
+  ip->ip_len = htons(sizeof(struct ip) + sizeof(struct udphdr) + strlen(data));
+  ip->ip_sum = in_cksum((unsigned short*)ip, ip->ip_hl << 2);
 }
 
 void swap_udp(struct udphdr *udp, char* data) {
   unsigned short temp_port;
 
-  temp_port = udp->uh_sport;
+  temp_port = ntohs(udp->uh_sport);
   udp->uh_sport = udp->uh_dport;
-  udp->uh_dport = udp->uh_sport;
-  udp->uh_ulen = sizeof(struct udphdr) + strlen(data);
+  udp->uh_dport = htons(temp_port);
+  udp->uh_ulen = htons(sizeof(struct udphdr) + strlen(data));
+  udp->uh_sum = 0;
 
   memcpy((char *)udp + sizeof(struct udphdr), data, strlen(data));
 }
@@ -81,7 +123,6 @@ int main(int argc, char* argv[]) {
   int pktsizelen;
   unsigned int cur, i, is_hostring;
   char *pkt, *buf, *payload, *data;
-  struct in_addr temp_addr;
   struct pollfd pollfd[1];
   struct netmap_ring *txring, *rxring;
   struct ether_header *ether;
@@ -89,8 +130,9 @@ int main(int argc, char* argv[]) {
   struct ip *ip;
   struct udphdr *udp;
   int recieved = 0;
+  int sent = 0;
 
-  nm_desc = ("netmap:ix1*", NULL, 0, NULL);
+  nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
 
   for(;;) {
     pollfd[0].fd = nm_desc->fd;
@@ -118,6 +160,7 @@ int main(int argc, char* argv[]) {
         payload = (char*)ip + (ip->ip_hl<<2);
 
         if(ip->ip_p == IPPROTO_UDP) {
+          udp = (struct udphdr *)payload;
           data = payload + sizeof(struct udphdr);
           printf("recieved: %s\n", data);
           recieved = 1;
@@ -127,6 +170,8 @@ int main(int argc, char* argv[]) {
       if(recieved)
         break;
     }
+    if(recieved)
+      break;
   }
 
   for(;;) {
@@ -134,20 +179,24 @@ int main(int argc, char* argv[]) {
     pollfd[0].events = POLLOUT;
     poll(pollfd, 1, -1);
 
-    txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
-    pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(data);
+    if(sent) {
+      txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
+      pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(data);
 
-    udp = (struct udphdr*)ip + (ip->ip_hl<<2);
-    swap_ether(ether);
-    swap_ip(ip, data);
-    swap_udp(udp, data);
+      swap_ether(ether);
+      swap_ip(ip, data);
+      swap_udp(udp, data);
 
-    cur = txring->cur;
-    buf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
-    nm_pkt_copy(pkt, buf, pktsizelen);
-    txring->slot[cur].len = pktsizelen;
-    txring->slot[cur].flags |= NS_BUF_CHANGED;
+      cur = txring->cur;
+      buf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
+      nm_pkt_copy(pkt, buf, pktsizelen);
+      txring->slot[cur].len = pktsizelen;
+      txring->slot[cur].flags |= NS_BUF_CHANGED;
 
-    txring->head = txring->cur = nm_ring_next(txring, cur);
+      txring->head = txring->cur = nm_ring_next(txring, cur);
+      sent = 1;
+    } else {
+      break;
+    }
   }
 }
