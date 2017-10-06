@@ -179,7 +179,7 @@ int main(int argc, char* argv[]) {
     pollfd[0].events = POLLOUT;
     poll(pollfd, 1, -1);
 
-    if(sent) {
+    if(!sent) {
       txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
       pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(data);
 
