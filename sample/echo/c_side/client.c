@@ -163,11 +163,12 @@ double get_interval(struct timeval *begin, struct timeval *end){
 
 int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
-  int idx;
+  int idx = 0;
   double intvl;
   unsigned int cur, i, is_hostring;
   char *pkt, *buf, *tbuf, *payload;
   char data[512];
+  char *counted_data;
   struct in_addr src, dst;
   struct pollfd pollfd[1];
   struct netmap_ring *txring, *rxring;
@@ -187,27 +188,34 @@ int main(int argc, char* argv[]) {
     printf("error. over size\n");
   }
 
+  pkthdrlen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr);
+  pktsizelen = pkthdrlen + strlen(data) + 3;
+
   gettimeofday(&begin, NULL);
 
   nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
   txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
-  pkthdrlen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr);
-  pktsizelen = pkthdrlen + strlen(data);
 
-  if((pkt = malloc(pktsizelen)) == NULL) {
+  if((counted_data = malloc(strlen(data) + 3)) == NULL){
     perror("malloc");
   }
 
-  create_etherhdr(pkt);
-  create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
-  create_udphdr(pkt, 11233, data);
+  while(idx < REPEAT){
+    sprintf(counted_data, "%s%03d", data, idx);
 
-  while(1) {
-    pollfd[0].fd = nm_desc->fd;
-    pollfd[0].events = POLLOUT;
-    poll(pollfd, 1, -1);
+    if((pkt = malloc(pktsizelen)) == NULL) {
+      perror("malloc");
+    }
 
-    for(idx = 0; idx < REPEAT || nm_ring_empty(txring); ++idx) {
+    create_etherhdr(pkt);
+    create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
+    create_udphdr(pkt, 11233, counted_data);
+
+    while(1) {
+      pollfd[0].fd = nm_desc->fd;
+      pollfd[0].events = POLLOUT;
+      poll(pollfd, 1, -1);
+
       cur = txring->cur;
       tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
       nm_pkt_copy(pkt, tbuf, pktsizelen);
@@ -215,65 +223,52 @@ int main(int argc, char* argv[]) {
       txring->slot[cur].flags |= NS_BUF_CHANGED;
 
       txring->head = txring->cur = nm_ring_next(txring, cur);
+
+      if(pollfd[0].revents & POLLOUT) {
+        break;
+      }
     }
 
-    if(pollfd[0].revents & POLLOUT) {
-      printf("idx: %d\n", idx);
-      free(pkt);
-      break;
-    }
-  }
+    while(1) {
+      pollfd[0].fd = nm_desc->fd;
+      pollfd[0].events = POLLIN;
+      poll(pollfd, 1, -1);
 
-  while(1) {
-    pollfd[0].fd = nm_desc->fd;
-    pollfd[0].events = POLLIN;
-    poll(pollfd, 1, -1);
+      for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring; i++) {
+        is_hostring = (i == nm_desc->last_rx_ring);
+        rxring = NETMAP_RXRING(nm_desc->nifp, i);
 
-    for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring; i++) {
+        while(!nm_ring_empty(rxring)) {
+          cur = rxring->cur;
+          buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
+          ether = (struct ether_header *)buf;
+          if(ntohs(ether->ether_type) == ETHERTYPE_ARP) {
+            swapto(!is_hostring, &rxring->slot[cur]);
+            rxring->head = rxring->cur = nm_ring_next(rxring, cur);
+            continue;
+          }
+          ip = (struct ip *)(buf + sizeof(struct ether_header));
 
-      is_hostring = (i == nm_desc->last_rx_ring);
-
-      rxring = NETMAP_RXRING(nm_desc->nifp, i);
-
-      while(!nm_ring_empty(rxring)) {
-        cur = rxring->cur;
-        buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
-        ether = (struct ether_header *)buf;
-        if(ntohs(ether->ether_type) == ETHERTYPE_ARP) {
-          printf("This is ARP.\n");
-          arp = (struct ether_arp *)(buf + sizeof(struct ether_header));
-
-          printf("arp_spa=%s\n",ip_ntoa2(arp->arp_spa));
-          printf("arp_tpa=%s\n",ip_ntoa2(arp->arp_tpa));
+          if (ip->ip_p == IPPROTO_UDP) {
+            udp = (struct udphdr *)(ip + (ip->ip_hl<<2));
+            printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
+            printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
+            printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
+            if(strcmp(data, payload + sizeof(struct udphdr*)) == 0) {
+              printf("ok.\n");
+              ++idx;
+              break;
+            }
+          }
 
           swapto(!is_hostring, &rxring->slot[cur]);
           rxring->head = rxring->cur = nm_ring_next(rxring, cur);
-          continue;
         }
-        ip = (struct ip *)(buf + sizeof(struct ether_header));
-        payload = (char *)ip + (ip->ip_hl<<2);
-
-        if (ip->ip_p == IPPROTO_UDP) {
-          udp = (struct udphdr *)payload;
-          printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
-          printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
-          printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
-          if(strcmp(data, payload + sizeof(struct udphdr*)) == 0) {
-            printf("ok.\n");
-            return 0;
-          }
-        }
-
-        swapto(!is_hostring, &rxring->slot[cur]);
-        rxring->head = rxring->cur = nm_ring_next(rxring, cur);
       }
-    }
-    if(pollfd[0].revents & POLLIN) {
-      gettimeofday(&end, NULL);
-      break;
     }
   }
 
+  gettimeofday(&end, NULL);
   intvl = get_interval(&begin, &end);
   printf("interval-> %f\n", intvl);
 
