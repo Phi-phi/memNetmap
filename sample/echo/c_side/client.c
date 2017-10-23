@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <sys/time.h>
+#define REPEAT 100
 
 struct nm_desc *nm_desc;
 
@@ -19,7 +21,7 @@ char *ip_ntoa2(u_char *d){
   return str;
 }
 
-static unsigned short
+  static unsigned short
 in_cksum(unsigned short *addr, int len)
 {
   int nleft, sum;
@@ -150,8 +152,19 @@ void swapto(int to_hostring, struct netmap_slot *rxslot) {
   }
 }
 
+double get_interval(struct timeval *begin, struct timeval *end){
+  double b_sec, e_sec;
+
+  b_sec = begin->tv_sec + (double)begin->tv_usec * 1e-6;
+  e_sec = end->tv_sec + (double)end->tv_usec * 1e-6;
+
+  return e_sec - b_sec;
+}
+
 int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
+  int idx;
+  double intvl;
   unsigned int cur, i, is_hostring;
   char *pkt, *buf, *tbuf, *payload;
   char data[512];
@@ -162,11 +175,11 @@ int main(int argc, char* argv[]) {
   struct ether_arp *arp;
   struct ip *ip;
   struct udphdr *udp;
+  struct timeval begin, end;
 
   src.s_addr = inet_addr("10.2.2.2");
   dst.s_addr = inet_addr("10.2.2.3");
 
-  nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
   printf("INPUT: ");
   scanf("%s", data);
 
@@ -174,6 +187,9 @@ int main(int argc, char* argv[]) {
     printf("error. over size\n");
   }
 
+  gettimeofday(&begin, NULL);
+
+  nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
   txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
   pkthdrlen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr);
   pktsizelen = pkthdrlen + strlen(data);
@@ -191,15 +207,18 @@ int main(int argc, char* argv[]) {
     pollfd[0].events = POLLOUT;
     poll(pollfd, 1, -1);
 
-    cur = txring->cur;
-    tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
-    nm_pkt_copy(pkt, tbuf, pktsizelen);
-    txring->slot[cur].len = pktsizelen;
-    txring->slot[cur].flags |= NS_BUF_CHANGED;
+    for(idx = 0; idx < REPEAT || nm_ring_empty(txring); ++idx) {
+      cur = txring->cur;
+      tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
+      nm_pkt_copy(pkt, tbuf, pktsizelen);
+      txring->slot[cur].len = pktsizelen;
+      txring->slot[cur].flags |= NS_BUF_CHANGED;
 
-    txring->head = txring->cur = nm_ring_next(txring, cur);
+      txring->head = txring->cur = nm_ring_next(txring, cur);
+    }
 
     if(pollfd[0].revents & POLLOUT) {
+      printf("idx: %d\n", idx);
       free(pkt);
       break;
     }
@@ -249,7 +268,14 @@ int main(int argc, char* argv[]) {
         rxring->head = rxring->cur = nm_ring_next(rxring, cur);
       }
     }
-    if (ioctl(nm_desc->fd, NIOCRXSYNC, NULL) != 0)
-      perror("sync ioctl");
+    if(pollfd[0].revents & POLLIN) {
+      gettimeofday(&end, NULL);
+      break;
+    }
   }
+
+  intvl = get_interval(&begin, &end);
+  printf("interval-> %f\n", intvl);
+
+  return 0;
 }
