@@ -41,7 +41,7 @@ int main() {
     if (n < 0) {
       perror("Error receiving data");
     } else {
-      printf("GOT %d BYTES\n",n);
+      printf("GOT %d BYTES. %s\n",n, bufin);
       sendto(ld, bufin, n, 0, (struct sockaddr *)&remote, len);
     }
   }
