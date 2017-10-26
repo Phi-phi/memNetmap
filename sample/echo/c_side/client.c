@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) {
   char data[512];
   char *counted_data;
   struct in_addr src, dst;
-  struct pollfd pollfd[1];
+  struct pollfd pollfd[2];
   struct netmap_ring *txring, *rxring;
   struct ether_header *ether;
   struct ip *ip;
@@ -202,16 +202,21 @@ int main(int argc, char* argv[]) {
   create_etherhdr(pkt);
   create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
 
+  pollfd[0].fd = nm_desc->fd;
+  pollfd[0].events = POLLIN;
+  pollfd[1].fd = nm_desc->fd;
+  pollfd[1].events = POLLOUT;
+
   gettimeofday(&begin, NULL);
   while(idx < REPEAT){
     sprintf(counted_data, "%s%03d", data, idx);
 
     create_udphdr(pkt, 11233, counted_data);
 
+    memcpy(pkt + pkthdrlen, counted_data, strlen(counted_data));
+
     while(1) {
-      pollfd[0].fd = nm_desc->fd;
-      pollfd[0].events = POLLOUT;
-      poll(pollfd, 1, -1);
+      poll(pollfd, 2, -1);
 
       cur = txring->cur;
       tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
@@ -220,17 +225,9 @@ int main(int argc, char* argv[]) {
       txring->slot[cur].flags |= NS_BUF_CHANGED;
 
       txring->head = txring->cur = nm_ring_next(txring, cur);
-
-      if(pollfd[0].revents & POLLOUT) {
-        break;
+      if(pollfd[0].revents == POLLOUT) {
+        before_idx = idx;
       }
-    }
-
-    before_idx = idx;
-    while(1) {
-      pollfd[0].fd = nm_desc->fd;
-      pollfd[0].events = POLLIN;
-      poll(pollfd, 1, -1);
 
       for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring && before_idx == idx; i++) {
         is_hostring = (i == nm_desc->last_rx_ring);
@@ -259,15 +256,12 @@ int main(int argc, char* argv[]) {
               break;
             }
           }
-          if(before_idx < idx) {
-            break;
-          }
 
           swapto(!is_hostring, &rxring->slot[cur]);
           rxring->head = rxring->cur = nm_ring_next(rxring, cur);
         }
       }
-      if(before_idx < idx) {
+      if(pollfd[1].revents == POLLIN && before_idx < idx) {
         break;
       }
     }
