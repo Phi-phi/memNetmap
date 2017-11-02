@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#define REPEAT 1000
+#define REPEAT 100
 
 int main() {
   int ld;
@@ -37,10 +37,11 @@ int main() {
   while (1) {
     while (recieved < REPEAT) {
       n = recvfrom(ld, bufin, 512, 0, (struct sockaddr *)&remote, &len);
-      if (n < 0) {
+      if (n > 0) {
         ++recieved;
       }
     }
+    recieved = 0;
 
     printf("Got a datagram from %s port %d\n",
         inet_ntoa(remote.sin_addr), ntohs(remote.sin_port));

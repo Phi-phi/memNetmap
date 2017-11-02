@@ -12,7 +12,7 @@
 #include <net/if.h>
 #include <sys/time.h>
 #define REPEAT 100
-#define SEND_REPEAT 1000
+#define SEND_REPEAT 100
 
 struct nm_desc *nm_desc;
 
@@ -164,7 +164,7 @@ int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
   int before_idx, idx = 0;
   double intvl;
-  unsigned int cur, i, sent, is_hostring;
+  unsigned int cur, i, sent = 0, is_hostring;
   char *pkt, *buf, *tbuf, *payload;
   char data[512];
   char *counted_data;
@@ -190,6 +190,9 @@ int main(int argc, char* argv[]) {
   pktsizelen = pkthdrlen + strlen(data) + 3;
 
   nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
+
+  ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
+  ioctl(nm_desc->fd, NIOCRXSYNC, NULL);
 
   if((counted_data = malloc(strlen(data) + 3)) == NULL){
     perror("malloc");
@@ -232,6 +235,7 @@ int main(int argc, char* argv[]) {
         break;
       }
     }
+    sent = 0;
 
     before_idx = idx;
     while(1) {
@@ -260,7 +264,7 @@ int main(int argc, char* argv[]) {
             printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
             printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
             printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
-            if(strcmp(data, payload + sizeof(struct udphdr*)) == 0) {
+            if(strcmp(counted_data, payload + sizeof(struct udphdr*)) == 0) {
               printf("ok.\n");
               ++idx;
               break;
@@ -281,7 +285,8 @@ int main(int argc, char* argv[]) {
   }
 
   gettimeofday(&end, NULL);
-  intvl = get_interval(&begin, &end) - 1.0;
+  //sever側でsendを1sec待っているため、１００秒マイナス
+  intvl = get_interval(&begin, &end) - 100.0;
   printf("interval-> %f\n", intvl);
   printf("average-> %f\n", intvl/REPEAT);
 
