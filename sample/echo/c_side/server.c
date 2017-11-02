@@ -6,9 +6,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#define REPEAT 1000
 
 int main() {
   int ld;
+  int recieved = 0;
   struct sockaddr_in skaddr, remote;
   unsigned int len,n;
   char bufin[512];
@@ -33,7 +35,12 @@ int main() {
 
   len = sizeof(struct sockaddr_in);
   while (1) {
-    n = recvfrom(ld, bufin, 512, 0, (struct sockaddr *)&remote, &len);
+    while (recieved < REPEAT) {
+      n = recvfrom(ld, bufin, 512, 0, (struct sockaddr *)&remote, &len);
+      if (n < 0) {
+        ++recieved;
+      }
+    }
 
     printf("Got a datagram from %s port %d\n",
         inet_ntoa(remote.sin_addr), ntohs(remote.sin_port));

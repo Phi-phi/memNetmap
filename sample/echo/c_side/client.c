@@ -12,6 +12,7 @@
 #include <net/if.h>
 #include <sys/time.h>
 #define REPEAT 100
+#define SEND_REPEAT 1000
 
 struct nm_desc *nm_desc;
 
@@ -163,7 +164,7 @@ int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
   int before_idx, idx = 0;
   double intvl;
-  unsigned int cur, i, is_hostring;
+  unsigned int cur, i, sent, is_hostring;
   char *pkt, *buf, *tbuf, *payload;
   char data[512];
   char *counted_data;
@@ -189,7 +190,6 @@ int main(int argc, char* argv[]) {
   pktsizelen = pkthdrlen + strlen(data) + 3;
 
   nm_desc = nm_open("netmap:ix1*", NULL, 0, NULL);
-  txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
 
   if((counted_data = malloc(strlen(data) + 3)) == NULL){
     perror("malloc");
@@ -213,13 +213,20 @@ int main(int argc, char* argv[]) {
       pollfd[0].events = POLLOUT;
       poll(pollfd, 1, -1);
 
-      cur = txring->cur;
-      tbuf = NETMAP_BUF(txring, txring->slot[txring->cur].buf_idx);
-      nm_pkt_copy(pkt, tbuf, pktsizelen);
-      txring->slot[cur].len = pktsizelen;
-      txring->slot[cur].flags |= NS_BUF_CHANGED;
+      for(i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring - 1 && sent < REPEAT; ++i) {
+        txring = NETMAP_TXRING(nm_desc->nifp, i);
 
-      txring->head = txring->cur = nm_ring_next(txring, cur);
+        while(!nm_ring_empty(txring) && sent < REPEAT) {
+          cur = txring->cur;
+          tbuf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
+          nm_pkt_copy(pkt, tbuf, pktsizelen);
+          txring->slot[cur].len = pktsizelen;
+          txring->slot[cur].flags |= NS_BUF_CHANGED;
+
+          txring->head = txring->cur = nm_ring_next(txring, cur);
+          ++sent;
+        }
+      }
 
       if(pollfd[0].revents & POLLOUT) {
         break;
