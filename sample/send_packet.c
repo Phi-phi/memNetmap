@@ -19,36 +19,36 @@ void printHex(char* buf, size_t len) {
 }
 
 
-static unsigned short
+  static unsigned short
 in_cksum(unsigned short *addr, int len)
 {
-    int nleft, sum;
-    unsigned short *w;
-    union {
-        unsigned short us;
-        unsigned char  uc[2];
-    } last;
-    unsigned short answer;
+  int nleft, sum;
+  unsigned short *w;
+  union {
+    unsigned short us;
+    unsigned char  uc[2];
+  } last;
+  unsigned short answer;
 
-    nleft = len;
-    sum = 0;
-    w = addr;
+  nleft = len;
+  sum = 0;
+  w = addr;
 
-    while (nleft > 1)  {
-        sum += *w++;
-        nleft -= 2;
-    }
+  while (nleft > 1)  {
+    sum += *w++;
+    nleft -= 2;
+  }
 
-    if (nleft == 1) {
-        last.uc[0] = *(unsigned char *)w;
-        last.uc[1] = 0;
-        sum += last.us;
-    }
+  if (nleft == 1) {
+    last.uc[0] = *(unsigned char *)w;
+    last.uc[1] = 0;
+    sum += last.us;
+  }
 
-    sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
-    sum += (sum >> 16);                     /* add carry */
-    answer = ~sum;                          /* truncate to 16 bits */
-    return(answer);
+  sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
+  sum += (sum >> 16);                     /* add carry */
+  answer = ~sum;                          /* truncate to 16 bits */
+  return(answer);
 }
 
 void create_etherhdr(char* buf) {
@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
   data = argv[1];
   counted_data = malloc(strlen(data) + 2);
   if(counted_data == NULL)
-      perror("malloc");
+    perror("malloc");
   src.s_addr = inet_addr("10.2.2.2");
   dst.s_addr = inet_addr("10.2.2.3");
 
@@ -141,10 +141,10 @@ int main(int argc, char* argv[]) {
       pkt = malloc(pktsizelen);
 
       if(pkt == NULL)
-          perror("malloc");
+        perror("malloc");
 
       create_etherhdr(pkt);
-      create_iphdr(pkt, &src, &dst, pktsizelen);
+      create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
       create_udphdr(pkt, 12345, counted_data);
 
       nm_pkt_copy(pkt, tbuf, pktsizelen);
