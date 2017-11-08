@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #define REPEAT 100
 #define SEND_REPEAT 100
+#define TIMEOUT 1500
 
 struct nm_desc *nm_desc;
 
@@ -163,6 +164,7 @@ double get_interval(struct timeval *begin, struct timeval *end){
 int main(int argc, char* argv[]) {
   int pktsizelen, pkthdrlen;
   int before_idx, idx = 0;
+  int pkt_loss = 0;
   double intvl;
   unsigned int cur, i, sent = 0, is_hostring;
   char *pkt, *buf, *tbuf, *payload;
@@ -241,44 +243,50 @@ int main(int argc, char* argv[]) {
     while(1) {
       pollfd[0].fd = nm_desc->fd;
       pollfd[0].events = POLLIN;
-      poll(pollfd, 1, -1);
+      if(poll(pollfd, 1, TIMEOUT) > 0) {
 
-      for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring && before_idx == idx; i++) {
-        is_hostring = (i == nm_desc->last_rx_ring);
-        rxring = NETMAP_RXRING(nm_desc->nifp, i);
+        for (i = nm_desc->first_rx_ring; i <= nm_desc->last_rx_ring && before_idx == idx; i++) {
+          is_hostring = (i == nm_desc->last_rx_ring);
+          rxring = NETMAP_RXRING(nm_desc->nifp, i);
 
-        while(!nm_ring_empty(rxring)) {
-          cur = rxring->cur;
-          buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
-          ether = (struct ether_header *)buf;
-          if(ntohs(ether->ether_type) == ETHERTYPE_ARP) {
-            swapto(!is_hostring, &rxring->slot[cur]);
-            rxring->head = rxring->cur = nm_ring_next(rxring, cur);
-            continue;
-          }
-          ip = (struct ip *)(buf + sizeof(struct ether_header));
-          payload = (char*)ip + (ip->ip_hl<<2);
+          while(!nm_ring_empty(rxring)) {
+            cur = rxring->cur;
+            buf = NETMAP_BUF(rxring, rxring->slot[cur].buf_idx);
+            ether = (struct ether_header *)buf;
+            if(ntohs(ether->ether_type) == ETHERTYPE_ARP) {
+              swapto(!is_hostring, &rxring->slot[cur]);
+              rxring->head = rxring->cur = nm_ring_next(rxring, cur);
+              continue;
+            }
+            ip = (struct ip *)(buf + sizeof(struct ether_header));
+            payload = (char*)ip + (ip->ip_hl<<2);
 
-          if (ip->ip_p == IPPROTO_UDP) {
-            udp = (struct udphdr *)payload;
-            printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
-            printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
-            printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
-            if(strcmp(counted_data, payload + sizeof(struct udphdr*)) == 0) {
-              printf("ok.\n");
-              ++idx;
+            if (ip->ip_p == IPPROTO_UDP) {
+              udp = (struct udphdr *)payload;
+              printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
+              printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
+              printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
+              if(strcmp(counted_data, payload + sizeof(struct udphdr*)) == 0) {
+                printf("ok.\n");
+                ++idx;
+                break;
+              }
+            }
+            if(before_idx < idx) {
               break;
             }
-          }
-          if(before_idx < idx) {
-            break;
-          }
 
-          swapto(!is_hostring, &rxring->slot[cur]);
-          rxring->head = rxring->cur = nm_ring_next(rxring, cur);
+            swapto(!is_hostring, &rxring->slot[cur]);
+            rxring->head = rxring->cur = nm_ring_next(rxring, cur);
+          }
         }
-      }
-      if(before_idx < idx) {
+        if(before_idx < idx) {
+          break;
+        }
+      } else {
+        printf("timeout\n");
+        ++idx;
+        ++pkt_loss;
         break;
       }
     }
@@ -289,6 +297,7 @@ int main(int argc, char* argv[]) {
   intvl = get_interval(&begin, &end) - 100.0;
   printf("interval-> %f\n", intvl);
   printf("average-> %f\n", intvl/REPEAT);
+  printf("packet loss: %d\n", pkt_loss);
 
   nm_close(nm_desc);
 
