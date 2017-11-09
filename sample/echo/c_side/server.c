@@ -6,7 +6,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#ifndef REPEAT
 #define REPEAT 100
+#endif
 
 int main() {
   int ld;
@@ -14,6 +17,8 @@ int main() {
   struct sockaddr_in skaddr, remote;
   unsigned int len,n;
   char bufin[512];
+
+  printf("repeat: %d\n", REPEAT);
 
   if ((ld = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP )) < 0) {
     printf("Problem creating socket\n");
@@ -37,8 +42,10 @@ int main() {
   while (1) {
     while (recieved < REPEAT) {
       n = recvfrom(ld, bufin, 512, 0, (struct sockaddr *)&remote, &len);
-      if (n > 0) {
-        ++recieved;
+      ++recieved;
+      if (n < 0) {
+        perror("recieved");
+        break;
       }
     }
     recieved = 0;
@@ -46,12 +53,9 @@ int main() {
     printf("Got a datagram from %s port %d\n",
         inet_ntoa(remote.sin_addr), ntohs(remote.sin_port));
 
-    if (n < 0) {
-      perror("Error receiving data");
-    } else {
-      printf("GOT %d BYTES. %s\n",n, bufin);
-      sendto(ld, bufin, n, 0, (struct sockaddr *)&remote, len);
-    }
+    printf("GOT %d BYTES. %s\n",n, bufin);
+    sendto(ld, bufin, n, 0, (struct sockaddr *)&remote, len);
   }
+
   return(0);
 }
