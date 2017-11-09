@@ -11,9 +11,13 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <sys/time.h>
+
 #define REPEAT 100
+#define TIMEOUT 1000
+
+#ifndef SEND_REPEAT
 #define SEND_REPEAT 100
-#define TIMEOUT 1500
+#endif
 
 struct nm_desc *nm_desc;
 
@@ -181,6 +185,8 @@ int main(int argc, char* argv[]) {
   src.s_addr = inet_addr("10.2.2.2");
   dst.s_addr = inet_addr("10.2.2.3");
 
+  printf("send repeat: %d\n", SEND_REPEAT);
+
   printf("INPUT: ");
   scanf("%s", data);
 
@@ -218,10 +224,10 @@ int main(int argc, char* argv[]) {
       pollfd[0].events = POLLOUT;
       poll(pollfd, 1, -1);
 
-      for(i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring - 1 && sent < REPEAT; ++i) {
+      for(i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring - 1 && sent < SEND_REPEAT; ++i) {
         txring = NETMAP_TXRING(nm_desc->nifp, i);
 
-        while(!nm_ring_empty(txring) && sent < REPEAT) {
+        while(!nm_ring_empty(txring) && sent < SEND_REPEAT) {
           cur = txring->cur;
           tbuf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
           nm_pkt_copy(pkt, tbuf, pktsizelen);
@@ -234,6 +240,7 @@ int main(int argc, char* argv[]) {
       }
 
       if(pollfd[0].revents & POLLOUT) {
+        ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
         break;
       }
     }
@@ -263,11 +270,9 @@ int main(int argc, char* argv[]) {
 
             if (ip->ip_p == IPPROTO_UDP) {
               udp = (struct udphdr *)payload;
-              printf("UDP Src port: %u\n", ntohs(udp->uh_sport));
-              printf("UDP Dst port: %u\n", ntohs(udp->uh_dport));
-              printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
+              // printf("Recieved: %s\n", payload + sizeof(struct udphdr *));
               if(strcmp(counted_data, payload + sizeof(struct udphdr*)) == 0) {
-                printf("ok.\n");
+                // printf("ok.\n");
                 ++idx;
                 break;
               }
@@ -293,10 +298,10 @@ int main(int argc, char* argv[]) {
   }
 
   gettimeofday(&end, NULL);
-  //sever側でsendを1sec待っているため、１００秒マイナス
-  intvl = get_interval(&begin, &end) - 100.0;
-  printf("interval-> %f\n", intvl);
-  printf("average-> %f\n", intvl/REPEAT);
+  intvl = get_interval(&begin, &end) - pkt_loss * TIMEOUT / 1000;
+  printf("interval-> %f [sec]\n", intvl);
+  printf("average-> %f [sec]\n", intvl / (REPEAT - pkt_loss));
+  printf("packets per seconds %f [pps]\n", (REPEAT - pkt_loss) / intvl);
   printf("packet loss: %d\n", pkt_loss);
 
   nm_close(nm_desc);
