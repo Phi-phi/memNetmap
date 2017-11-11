@@ -301,7 +301,7 @@ int main(int argc, char* argv[]) {
   intvl = get_interval(&begin, &end) - pkt_loss * TIMEOUT / 1000;
   printf("interval-> %f [sec]\n", intvl);
   printf("average-> %f [sec]\n", intvl / (REPEAT - pkt_loss));
-  printf("packets per seconds %f [pps]\n", (REPEAT - pkt_loss) / intvl);
+  printf("packets per seconds %f [pps]\n", (REPEAT - pkt_loss) * SEND_REPEAT / intvl);
   printf("packet loss: %d\n", pkt_loss);
 
   nm_close(nm_desc);
