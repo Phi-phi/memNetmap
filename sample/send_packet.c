@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <poll.h>
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
@@ -7,6 +9,7 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 
 struct nm_desc *nm_desc;
 
@@ -19,36 +22,36 @@ void printHex(char* buf, size_t len) {
 }
 
 
-static unsigned short
+  static unsigned short
 in_cksum(unsigned short *addr, int len)
 {
-    int nleft, sum;
-    unsigned short *w;
-    union {
-        unsigned short us;
-        unsigned char  uc[2];
-    } last;
-    unsigned short answer;
+  int nleft, sum;
+  unsigned short *w;
+  union {
+    unsigned short us;
+    unsigned char  uc[2];
+  } last;
+  unsigned short answer;
 
-    nleft = len;
-    sum = 0;
-    w = addr;
+  nleft = len;
+  sum = 0;
+  w = addr;
 
-    while (nleft > 1)  {
-        sum += *w++;
-        nleft -= 2;
-    }
+  while (nleft > 1)  {
+    sum += *w++;
+    nleft -= 2;
+  }
 
-    if (nleft == 1) {
-        last.uc[0] = *(unsigned char *)w;
-        last.uc[1] = 0;
-        sum += last.us;
-    }
+  if (nleft == 1) {
+    last.uc[0] = *(unsigned char *)w;
+    last.uc[1] = 0;
+    sum += last.us;
+  }
 
-    sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
-    sum += (sum >> 16);                     /* add carry */
-    answer = ~sum;                          /* truncate to 16 bits */
-    return(answer);
+  sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
+  sum += (sum >> 16);                     /* add carry */
+  answer = ~sum;                          /* truncate to 16 bits */
+  return(answer);
 }
 
 void create_etherhdr(char* buf) {
@@ -106,54 +109,86 @@ void create_udphdr(char* buf, unsigned short dport, char* data) {
   memcpy((char *)udp + sizeof(struct udphdr), data, strlen(data));
 }
 
+double get_interval(struct timeval *begin, struct timeval *end){
+  double b_sec, e_sec;
+
+  b_sec = begin->tv_sec + (double)begin->tv_usec * 1e-6;
+  e_sec = end->tv_sec + (double)end->tv_usec * 1e-6;
+
+  return e_sec - b_sec;
+}
+
 int main(int argc, char* argv[]) {
-  int pktsizelen;
+  int pktsizelen, count_num = 0, max_num;
   unsigned int cur, i;
-  char *pkt, *tbuf, *data, *counted_data;
+  double intvl, ave;
+  char *pkt, *tbuf, *message, *count;
   struct in_addr src, dst;
   struct netmap_ring *txring;
   struct pollfd pollfd[1];
+  struct timeval begin, end;
 
-  data = argv[1];
-  counted_data = malloc(strlen(data) + 2);
-  if(counted_data == NULL)
-      perror("malloc");
+  count = argv[1];
+  max_num = atoi(count);
+
+  if (max_num <= 0) {
+    printf("repeat num error.\n");
+    exit(-1);
+  }
+
+  printf("sending %d packets\n", max_num);
+
   src.s_addr = inet_addr("10.2.2.2");
   dst.s_addr = inet_addr("10.2.2.3");
 
   nm_desc = nm_open("netmap:ix1", NULL, 0, NULL);
-  txring = NETMAP_TXRING(nm_desc->nifp, nm_desc->first_tx_ring);
-  cur = txring->cur;
-  i = 0;
 
-  while(1){
-    pollfd[0].fd = nm_desc->fd;
-    pollfd[0].events = POLLOUT;
+  *message = "This message sent for testing netmap";
+
+  pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(message);
+
+  pkt = malloc(pktsizelen);
+
+  if(pkt == NULL)
+    perror("malloc");
+
+  create_etherhdr(pkt);
+  create_iphdr(pkt, &src, &dst, pktsizelen - sizeof(struct ether_header));
+  create_udphdr(pkt, 12345, message);
+
+  pollfd[0].fd = nm_desc->fd;
+  pollfd[0].events = POLLOUT;
+
+  gettimeofday(&begin, NULL);
+
+  while (count_num < max_num) {
+    ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
     poll(pollfd, 1, -1);
 
-    for(; i < 30 || nm_ring_empty(txring); ++i) {
+    for (i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring && count_num < max_num; ++i) {
+      txring = NETMAP_TXRING(nm_desc->nifp, i);
       cur = txring->cur;
+
       tbuf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
-      sprintf(counted_data, "%s%d", data, i);
-
-      pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(counted_data);
-
-      pkt = malloc(pktsizelen);
-
-      if(pkt == NULL)
-          perror("malloc");
-
-      create_etherhdr(pkt);
-      create_iphdr(pkt, &src, &dst, pktsizelen);
-      create_udphdr(pkt, 12345, counted_data);
 
       nm_pkt_copy(pkt, tbuf, pktsizelen);
       txring->slot[cur].len = pktsizelen;
-      printHex(NETMAP_BUF(txring, txring->slot[cur].buf_idx), txring->slot[cur].len);
       txring->slot[cur].flags |= NS_BUF_CHANGED;
 
       txring->head = txring->cur = nm_ring_next(txring, cur);
-      free(pkt);
+      ++count_num;
     }
   }
+
+  gettimeofday(&end, NULL);
+  intvl = get_interval(&begin, &end);
+
+  printf("packet size: %d bytes\n", pktsizelen);
+  printf("interval-> %f [sec]\n", intvl);
+  printf("average-> %f [sec]\n", intvl / count_num);
+  printf("packets per seconds %f [pps]\n", count_num / intvl);
+
+  nm_close(nm_desc);
+
+  return 0;
 }
