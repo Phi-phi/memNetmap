@@ -180,19 +180,16 @@ int main(int argc, char* argv[]) {
           txring->head = txring->cur = nm_ring_next(txring, cur);
           ++count_num;
         }
-      }
-
-      for (i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring; ++i) {
-        txring = NETMAP_TXRING(nm_desc->nifp, i);
-        while(nm_tx_pending(txring)) {
-          ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
+        if (count_num < max_num ) {
+          while(nm_tx_pending(txring)) {
+            ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
+          }
         }
       }
-      if (pollfd[0].revents & POLLOUT && count_num >= max_num && poll_ret > 0) {
-        gettimeofday(&end, NULL);
-        break;
-      }
-
+    }
+    if (pollfd[0].revents & POLLOUT && count_num >= max_num) {
+      gettimeofday(&end, NULL);
+      break;
     }
   }
 
