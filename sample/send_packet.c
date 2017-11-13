@@ -121,8 +121,9 @@ double get_interval(struct timeval *begin, struct timeval *end){
 int main(int argc, char* argv[]) {
   int pktsizelen, count_num = 0, max_num;
   unsigned int cur, i;
-  double intvl, ave;
-  char *pkt, *tbuf, *message, *count;
+  double intvl;
+  char *pkt, *tbuf, *count;
+  char *message = "This message sent for testing netmap. Source code is written by phi.phiphiphiphiphi....................";
   struct in_addr src, dst;
   struct netmap_ring *txring;
   struct pollfd pollfd[1];
@@ -143,8 +144,7 @@ int main(int argc, char* argv[]) {
 
   nm_desc = nm_open("netmap:ix1", NULL, 0, NULL);
 
-  *message = "This message sent for testing netmap";
-
+  ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
   pktsizelen = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr) + strlen(message);
 
   pkt = malloc(pktsizelen);
@@ -161,26 +161,41 @@ int main(int argc, char* argv[]) {
 
   gettimeofday(&begin, NULL);
 
-  while (count_num < max_num) {
-    ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
+  while(1) {
     poll(pollfd, 1, -1);
 
-    for (i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring && count_num < max_num; ++i) {
-      txring = NETMAP_TXRING(nm_desc->nifp, i);
-      cur = txring->cur;
+    while (count_num < max_num) {
+      for (i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring && count_num < max_num; ++i) {
+        txring = NETMAP_TXRING(nm_desc->nifp, i);
 
-      tbuf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
+        while(!nm_ring_empty(txring) && count_num < max_num) {
+          cur = txring->cur;
 
-      nm_pkt_copy(pkt, tbuf, pktsizelen);
-      txring->slot[cur].len = pktsizelen;
-      txring->slot[cur].flags |= NS_BUF_CHANGED;
+          tbuf = NETMAP_BUF(txring, txring->slot[cur].buf_idx);
 
-      txring->head = txring->cur = nm_ring_next(txring, cur);
-      ++count_num;
+          nm_pkt_copy(pkt, tbuf, pktsizelen);
+          txring->slot[cur].len = pktsizelen;
+          txring->slot[cur].flags |= NS_BUF_CHANGED;
+
+          txring->head = txring->cur = nm_ring_next(txring, cur);
+          ++count_num;
+        }
+      }
+
+      for (i = nm_desc->first_tx_ring; i <= nm_desc->last_tx_ring; ++i) {
+        txring = NETMAP_TXRING(nm_desc->nifp, i);
+        while(nm_tx_pending(txring)) {
+          ioctl(nm_desc->fd, NIOCTXSYNC, NULL);
+        }
+      }
+      if (pollfd[0].revents & POLLOUT && count_num >= max_num && poll_ret > 0) {
+        gettimeofday(&end, NULL);
+        break;
+      }
+
     }
   }
 
-  gettimeofday(&end, NULL);
   intvl = get_interval(&begin, &end);
 
   printf("packet size: %d bytes\n", pktsizelen);
